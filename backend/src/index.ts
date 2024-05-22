@@ -8,7 +8,7 @@ const app = express();
 const Logger = morgan('tiny');
 
 import {dispatchController, trainTimetableController} from "./dispatchController.js";
-import {getServerList, getStationsList, getTrainsListForPost, getServerTz, getPlayer, getFullTimetable, getSpeedLimitsFromSimkol, getServerCodeList, getTrainsList, getServerTime, getEdrTimetable} from "./serverController.js";
+import {getServerList, getStationsList, getTrainsListForPost, getServerTz, getPlayer, getFullTimetable, getSpeedLimitsFromSimkol, getServerCodeList, getTrainsList, getServerTime, getEdrTimetable, getStationCodes} from "./serverController.js";
 import helmet from "helmet";
 import { ISpeedLimitApi } from "./interfaces/ISpeedLimitApi.js";
 import { ISpeedLimit } from "./interfaces/ISpeedLimit.js";
@@ -131,7 +131,8 @@ app
     .get("/trains/:serverCode/:post", (req: express.Request, res: express.Response) => getTrainsListForPost(req, res, completeTrainList[req.params.serverCode]))
     .get("/dispatch/:serverCode/:post", (req: express.Request, res: express.Response) => dispatchController(req, res, completeTrainList[req.params.serverCode]))
     .get("/train/:serverCode/:trainNo", (req: express.Request, res: express.Response) => trainTimetableController(req, res, completeTrainList[req.params.serverCode], speeds))
-    .get("/steam/:steamId", getPlayer);
+    .get("/steam/:steamId", getPlayer)
+    .get("/station_codes", getStationCodes)
 app.listen(process.env.LISTEN_PORT);
 
 console.log("🚆 Simrail Community EDR backend v2.5");

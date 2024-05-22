@@ -1,5 +1,5 @@
 import { osrmClient, selfClient, simkolClient, simrailClient, strictAwsSimrailClient } from "./simrailClient.js";
-import {BASE_AWS_API, BASE_SIMRAIL_API, POSTS, stationPositions} from "./config.js";
+import {BASE_AWS_API, BASE_SIMRAIL_API, POSTS, newInternalIdToSrId, stationPositions} from "./config.js";
 import express from "express";
 import { ApiResponse, Server, Station, Train } from "@simrail/types";
 import { ISteamUser } from "./interfaces/ISteamUser.js";
@@ -172,4 +172,9 @@ export function getSpeedLimitsFromSimkol() {
 
 export function getOsrmDataFromSelfApi(startLon: number, startLat: number, endLon: number, endLat: number) {
     return osrmClient.get(`route/v1/train/${Math.round(startLon * 100000) / 100000},${Math.round(startLat * 100000) / 100000};${Math.round(endLon * 100000) / 100000},${Math.round(endLat * 100000) / 100000}?overview=false&continue_straight=true`);
+}
+
+export function getStationCodes(_: express.Request, res: express.Response) {
+    // Send newInternalIdToSrId as a response
+    return res.send(newInternalIdToSrId);
 }
