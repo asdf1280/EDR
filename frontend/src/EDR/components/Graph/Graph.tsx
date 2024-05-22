@@ -47,7 +47,7 @@ const makeDate = (dateAry: string[], serverTime: number | undefined) => {
 
 const getStationTimetable = (postId: string, serverCode: string) => {
     return getTimetable(postId, serverCode).then((d) => {
-        return [postId, _keyBy(d, "trainNoLocal")];
+        return [postId, _keyBy(d, "trainNoLocal")] as [string, Dictionary<TimeTableRow>];
     });
 }
 
@@ -94,25 +94,33 @@ const CustomizedAxisTick = (data: any, displayMode: string, color: string) => (p
     );
 };
 
+type TrainPathNode = {
+    prev?: PathFindingLineTrace;
+    next?: PathFindingLineTrace;
+}
+
+function representIntTime(time: Date) {
+    return Number.parseInt(format(time, "HHmm"));
+}
 
 // TODO: This code is WET and have been written in an envening. Neeeeds refactoring of course ! (so it can be DRY :D)
 const GraphContent: React.FC<GraphProps> = ({timetable, post, serverTime, serverCode}) => {
     const [displayMode, setDisplayMode] = React.useState<LayoutType>("vertical");
     const [zoom, setZoom] = React.useState<number>(1);
-    const [dtNow, setDtNow] = React.useState(nowUTC(serverTime));
-    const currentHourSort = Number.parseInt(format(dtNow, "HHmm"));
+    const [serverTimeObject, setServerTimeObject] = React.useState(nowUTC(serverTime));
+    const currentHourSort = representIntTime(serverTimeObject);
     const [neighboursTimetables, setNeighboursTimetables] = React.useState<Dictionary<Dictionary<TimeTableRow>>>();
-    const [allPathsOfPosts, setAllPathsOfPosts] = React.useState<{[postId: string]: {prev?: PathFindingLineTrace, next?: PathFindingLineTrace}}>();
+    const [allPathsOfPosts, setAllPathsOfPosts] = React.useState<{[postId: string]: TrainPathNode}>();
     const [data, setData] = React.useState<any[]>();
     const {t} = useTranslation();
-    const onlyAnHourAround = React.useMemo(
-        () => _keyBy(timetable.filter((ttRow) =>
-            Math.abs(Number.parseInt(format(ttRow.scheduledArrivalObject, "HHmm")) - currentHourSort) <= 130 / zoom), "trainNoLocal"),
+    const timetableRowsWithinRange: {[trainNo: string]: TimeTableRow} = React.useMemo(
+        () => _keyBy(timetable.filter((ttRow: TimeTableRow) =>
+            Math.abs(representIntTime(ttRow.scheduledArrivalObject) - currentHourSort) <= 130 / zoom), "trainNoLocal"),
         [currentHourSort, timetable, zoom]);
 
-    React.useEffect(() => {
+    React.useEffect(() => { // This code is probably for refreshing the whole graph every 10 seconds. There might be a more straightforward way to do this. (At first glance, this seems like changing the Date object to same value again and again.)
         const intervalId = window.setInterval(() => {
-            setDtNow(nowUTC(serverTime));
+            setServerTimeObject(nowUTC(serverTime));
         }, 10000);
 
         return () => window.clearInterval(intervalId);
@@ -121,20 +129,22 @@ const GraphContent: React.FC<GraphProps> = ({timetable, post, serverTime, server
     React.useEffect(() => {
         const gottenPostConfig = postConfig[post];
         if (!post || !gottenPostConfig.graphConfig?.pre || !gottenPostConfig.graphConfig?.post || !serverCode) return;
-        const onScreenPosts = [...gottenPostConfig.graphConfig?.pre, ...gottenPostConfig.graphConfig.post];
-        const toCalculatePathPosts = [...gottenPostConfig.graphConfig?.pre, post, ...gottenPostConfig.graphConfig.post, ...gottenPostConfig.graphConfig.final];
+        const onScreenPosts = [...gottenPostConfig.graphConfig.pre, ...gottenPostConfig.graphConfig.post];
+        const postsToCalculatePath = [...gottenPostConfig.graphConfig.pre, post, ...gottenPostConfig.graphConfig.post, ...gottenPostConfig.graphConfig.final];
         // Get all pathfinding possible paths between two stations (with intermediate stations not dispatched by players)
-        const allPaths = toCalculatePathPosts.reduce((acc, val, index) => {
-            const maybeLineTraceAndDistancePrevious = index > 0
-                ? PathFinding_FindPathAndHaversineSum(toCalculatePathPosts[index - 1], toCalculatePathPosts[index])
+        const allPaths = postsToCalculatePath.reduce((acc, iteratingPost, index) => {
+            const prevPost = index > 0 ? postsToCalculatePath[index - 1] : undefined;
+            const nextPost = index < postsToCalculatePath.length - 1 ? postsToCalculatePath[index + 1] : undefined;
+            const maybeLineTraceAndDistancePrevious = prevPost
+                ? PathFinding_FindPathAndHaversineSum(prevPost, iteratingPost)
                 : undefined;
-            const maybeLineTraceAndDistanceNext = index < toCalculatePathPosts.length - 1
-                ? PathFinding_FindPathAndHaversineSum(toCalculatePathPosts[index], toCalculatePathPosts[index + 1])
+            const maybeLineTraceAndDistanceNext = nextPost
+                ? PathFinding_FindPathAndHaversineSum(iteratingPost, nextPost)
                 : undefined;
 
             return {
                 ...acc,
-                [val]: {
+                [iteratingPost]: {
                     prev: maybeLineTraceAndDistancePrevious?.[0],
                     next: maybeLineTraceAndDistanceNext?.[0]
                 }
@@ -146,23 +156,19 @@ const GraphContent: React.FC<GraphProps> = ({timetable, post, serverTime, server
         // Get timetable data
         Promise.all(onScreenPosts.map(postId => getStationTimetable(postId, serverCode)))
             .then(data => {
-                if (data !== null) {
-                    return Object.fromEntries(data);
-                } else {
-                    return;
-                }
+                return Object.fromEntries(data) ?? undefined; // This shouldn't be null or undefined in normal circumstances
             })
             .then(setNeighboursTimetables)
     }, [post, serverCode]);
 
     React.useEffect(() => {
-        if (!neighboursTimetables || !onlyAnHourAround || !allPathsOfPosts) return;
+        if (!neighboursTimetables || !timetableRowsWithinRange || !allPathsOfPosts) return;
         const gottenPostConfig = postConfig[post];
         if (!gottenPostConfig.graphConfig?.pre || !gottenPostConfig.graphConfig?.post) return;
 
         const postsToScan = [...gottenPostConfig.graphConfig!.pre, post, ...gottenPostConfig.graphConfig!.post];
-        const data = postsToScan.flatMap((postId) => {
-            const allTrainDepartures = Object.fromEntries(Object.values(onlyAnHourAround).map((t): [] | [string, number] => {
+        const data = postsToScan.flatMap((postId: string) => {
+            const allTrainDepartures = Object.fromEntries(Object.values(timetableRowsWithinRange).map((t): [] | [string, number] => {
                 const targetTrain = postId === post ? t : neighboursTimetables[postId]?.[t.trainNoLocal];
                 if (!targetTrain) return [];
                 const nextPost = targetTrain.toPost ? postToInternalIds[encodeURIComponent(targetTrain.toPost)]?.id : false;
@@ -171,7 +177,7 @@ const GraphContent: React.FC<GraphProps> = ({timetable, post, serverTime, server
                 const targetValue = isTrainGoingToKatowice ? dateFormatter(targetTrain?.scheduledDepartureObject) : dateFormatter(targetTrain?.scheduledArrivalObject);
                 return [targetTrain.trainNoLocal, makeDate(targetValue.split(":"), serverTime)]
             }))
-            const allTrainArrivals = Object.fromEntries(Object.values(onlyAnHourAround).map((t) => {
+            const allTrainArrivals = Object.fromEntries(Object.values(timetableRowsWithinRange).map((t) => {
                 const targetTrain = postId === post ? t : neighboursTimetables[postId]?.[t.trainNoLocal];
                 if (!targetTrain) return [];
                 const nextPost = targetTrain.toPost ? postToInternalIds[encodeURIComponent(targetTrain.toPost)]?.id : false;
@@ -190,7 +196,7 @@ const GraphContent: React.FC<GraphProps> = ({timetable, post, serverTime, server
         });
 
         setData(data);
-    }, [neighboursTimetables, onlyAnHourAround, currentHourSort, post, allPathsOfPosts, serverTime])
+    }, [neighboursTimetables, timetableRowsWithinRange, currentHourSort, post, allPathsOfPosts, serverTime])
 
     const TimeComponent = displayMode === "vertical" ? XAxis : YAxis;
     const PostComponent = displayMode === "vertical" ? YAxis : XAxis;
@@ -224,11 +230,11 @@ const GraphContent: React.FC<GraphProps> = ({timetable, post, serverTime, server
                     >
                         <CartesianGrid strokeDasharray="3 3" />
                         <TimeComponent data-key="time" type="number" scale="time" domain={["dataMin", "dataMax"]} tickCount={20} interval={0} tickFormatter={dateFormatter} reversed={displayMode === "horizontal"}/>
-                        <ReferenceLine {...displayMode === "vertical" ? {x: dtNow.getTime()} : {y: dtNow.getTime()}}  stroke="black" strokeWidth={2} strokeOpacity={0.5} type={"dotted"}  />
+                        <ReferenceLine {...displayMode === "vertical" ? {x: serverTimeObject.getTime()} : {y: serverTimeObject.getTime()}}  stroke="black" strokeWidth={2} strokeOpacity={0.5} type={"dotted"}  />
                         <PostComponent dataKey="name" type="category" allowDuplicatedCategory={false} />
                         <Tooltip content={<CustomTooltip />} />
                         <Legend />
-                        {Object.values(onlyAnHourAround).map((t) => {
+                        {Object.values(timetableRowsWithinRange).map((t) => {
                             const color = configByType[t.trainType]?.graphColor ?? "purple"
                                 return <Line key={t.trainNoLocal} dataKey={t.trainNoLocal}
                                       label={CustomizedAxisTick(data, displayMode, color)}
