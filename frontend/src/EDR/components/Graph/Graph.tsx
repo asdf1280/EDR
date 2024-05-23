@@ -46,6 +46,30 @@ export type GraphData = {
     lines: GraphLine[];
 }
 
+const calculatePointToLineDistance = (x1: number, y1: number, x2: number, y2: number, px: number, py: number) => {
+    // Let's say A is line from (x1, y1) to (x2, y2), B is line from (x1, y1) to (px, py)
+    // According to the scala product, there T is angle between A and B
+    // AB cos T = AxBx + AyBy
+
+    let A = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+    if (A == 0) return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2);
+
+    // The percent of projected position is represented as,
+    // B cos T / A = (AxBx + AyBy) / A^2
+
+    let percent = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / (A ** 2);
+
+    if (percent >= 0 && percent <= 0) {
+        let projectedX = x1 + (x2 - x1) * percent;
+        let projectedY = y1 + (y2 - y1) * percent;
+        return Math.sqrt((px - projectedX) ** 2 + (py - projectedY) ** 2);
+    } else if (percent < 0) {
+        return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2);
+    } else {
+        return Math.sqrt((px - x2) ** 2 + (py - y2) ** 2);
+    }
+}
+
 // A new graph code based on train timetable. This code is WET because I wrote this while drinking a beer. It is a delicious spaghetti.
 // We need to test if the time comparison works properly around midnight. (I'm not sure how date in the game works, outside time)
 const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serverCode }) => {
@@ -410,11 +434,20 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                 let lastX = calculateX(lastNode.x);
                 let lastY = calculateY(lastNode.yStation, lastNode.yTrack);
 
+                // Drawing train ID above first node start
+                ctx.save();
+                ctx.translate(lastX, lastY);
+                ctx.rotate(-Math.PI / 4);
+                ctx.font = `${12 * cell}px`;
+                ctx.textAlign = "left";
+                ctx.fillStyle = ForeColor;
+                ctx.fillText(line.name, 3 * cell, 6 * cell);
+
                 for (let node of line.nodes) {
                     let x = calculateX(node.x);
                     let y = calculateY(node.yStation, node.yTrack);
 
-                    if(lastNode.stopType === 2) {
+                    if (lastNode.stopType === 2) {
                         ctx.lineWidth = 6 * cell;
                     } else {
                         ctx.lineWidth = 3 * cell;
@@ -454,6 +487,31 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
             ctx.lineTo(x, gy + gh + 10 * cell);
             ctx.stroke();
         }
+
+        const onCanvasClick = (e: MouseEvent) => {
+            let bcr = canvas.getBoundingClientRect();
+            let cxP = (e.clientX - bcr.left) / bcr.width;
+            let cyP = (e.clientY - bcr.top) / bcr.height;
+
+            let m: [number, GraphLine][] = data.lines.map((v) => {
+                let dist = Infinity;
+                for (let i = 1; i < v.nodes.length; i++) {
+                    let nDist = calculatePointToLineDistance(calculateX(v.nodes[i - 1].x) / canvas.width,
+                        calculateY(v.nodes[i - 1].yStation, v.nodes[i - 1].yTrack) / canvas.height,
+                        calculateX(v.nodes[i].x) / canvas.width,
+                        calculateY(v.nodes[i].yStation, v.nodes[i].yTrack) / canvas.height, cxP, cyP);
+                    dist = Math.min(dist, nDist);
+                }
+                return [dist, v];
+            });
+            m = _sortBy(m, (v) => v[0]);
+
+            let newTrainId = m[0][1].name;
+            if (baseTrainNumber !== newTrainId)
+                setBaseTrainNumber(newTrainId);
+        }
+        canvas.addEventListener("click", onCanvasClick);
+        return () => canvas.removeEventListener("click", onCanvasClick);
     })
 
     return <>
