@@ -4,6 +4,7 @@ import { ISteamUser } from "../config/ISteamUser";
 import { TrainTimeTableRow } from "../Sirius";
 import { TimeTableRow } from "../customTypes/TimeTableRow";
 import { ExtendedTrain } from "../customTypes/ExtendedTrain";
+import { Dictionary } from "lodash";
 
 export const BASE_API_URL = "http://127.0.0.1/";
 
@@ -54,3 +55,6 @@ export const getTzOffset = (serverCode: string): Promise<number> =>
 
 export const getServerTime = (serverCode: string): Promise<number> =>
     baseApiCall(`server/time/${serverCode}`);
+
+export const getStationCodes = (): Promise<Dictionary<number>> =>
+    baseApiCall("station_codes");
