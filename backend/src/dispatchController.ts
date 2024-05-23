@@ -37,13 +37,14 @@ const mergePostRows = (allPostsResponse: IFrontendStationTrainRow[][]) => {
 
 export async function dispatchController(req: express.Request, res: express.Response, trainList: IEdrServerTrain[]) {
     const { post } = req.params;
+    const numericId = req.query.numericId === "1";
 
     if (trainList === undefined || trainList === null) {
         console.error("Timetable is empty, cannot process dispatch request!")
         return res.sendStatus(500);
     }
 
-    if (!newInternalIdToSrId[post]){
+    if (!newInternalIdToSrId[post] && !numericId){
         return res.status(400).send({
             "error": "PEBKAC",
             "message": "Server or post is not supported"
@@ -52,14 +53,13 @@ export async function dispatchController(req: express.Request, res: express.Resp
 
     try {
         const mergePosts = req.query.mergePosts === "true";
-        const numericId = req.query.numericId === "1";
         if(numericId && !post.match(/^\d+$/)) {
             return res.status(400).send({
                 "error": "TYPE_MISMATCH",
                 "message": "Numeric ID requested, but post is not numeric"
             });
         }
-        const postsToFetch = numericId ? [parseInt(post)] : mergePosts ? POSTS[post] : [newInternalIdToSrId[post]];
+        const postsToFetch = numericId ? [parseInt(post)] : (mergePosts ? POSTS[post] : [newInternalIdToSrId[post]]);
         const data = await Promise.all(postsToFetch.map(post => getStationTimetable(post, trainList)));
         const mergedPosts = mergePostRows(data);
         return res
