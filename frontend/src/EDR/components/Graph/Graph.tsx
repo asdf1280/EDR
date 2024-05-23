@@ -40,8 +40,8 @@ export type GraphPost = {
 }
 
 export type GraphData = {
-    timeSince: Date;
-    timeUntil: Date;
+    timeSince: number;
+    timeUntil: number;
     posts: GraphPost[];
     lines: GraphLine[];
 }
@@ -68,6 +68,19 @@ const calculatePointToLineDistance = (x1: number, y1: number, x2: number, y2: nu
     } else {
         return Math.sqrt((px - x2) ** 2 + (py - y2) ** 2);
     }
+}
+
+const FixTimeOffset = (time: number, currentTime: number) => {
+    let offset = 0;
+    while(time - currentTime > 1000 * 60 * 60 * 12) {
+        time -= 1000 * 60 * 60 * 24;
+        offset -= 1000 * 60 * 60 * 24;
+    }
+    while(time - currentTime < -1000 * 60 * 60 * 12) {
+        time += 1000 * 60 * 60 * 24;
+        offset += 1000 * 60 * 60 * 24;
+    }
+    return offset;
 }
 
 // A new graph code based on train timetable. This code is WET because I wrote this while drinking a beer. It is a delicious spaghetti.
@@ -199,8 +212,8 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
             // Time to really calculate train routes
             let timeRange = 35 * 60 * 1000 / zoom; // 35 minutes
             let dataObj: GraphData = {
-                timeSince: new Date(currentServerTime - timeRange),
-                timeUntil: new Date(currentServerTime + timeRange * 3),
+                timeSince: currentServerTime - timeRange,
+                timeUntil: currentServerTime + timeRange * 3,
                 posts: [],
                 lines: []
             };
@@ -232,8 +245,16 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                 for (let rowIndex = 0; rowIndex < post[2].length; rowIndex++) {
                     const row = post[2][rowIndex];
 
-                    if (row.scheduledDepartureObject.getTime() < dataObj.timeSince.getTime()
-                        && row.scheduledArrivalObject.getTime() > dataObj.timeUntil.getTime() && row.scheduledArrivalObject.getTime() !== 0) {
+                    if(row.trainNoLocal === "244021") console.error(row);
+
+                    let fto = FixTimeOffset(row.scheduledDepartureObject.getTime(), currentServerTime);
+
+                    if (row.scheduledDepartureObject.getTime() + fto < dataObj.timeSince
+                        && row.scheduledArrivalObject.getTime() + fto > dataObj.timeUntil && row.scheduledArrivalObject.getTime() !== 0) {
+                        // Irrelevant train
+                        continue;
+                    }
+                    if (Math.abs(row.scheduledDepartureObject.getTime() + fto - currentServerTime) > 1000 * 60 * 60 * 6) {
                         // Irrelevant train
                         continue;
                     }
@@ -261,7 +282,7 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                     if (row.stopType === 0) { // Pass
                         nodes = [
                             {
-                                x: row.scheduledDepartureObject.getTime(),
+                                x: row.scheduledDepartureObject.getTime() + fto,
                                 yStation: postIndex,
                                 yTrack: 0
                             }
@@ -269,13 +290,13 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                     } else if (row.stopType === 1) { // Required stop
                         nodes = [
                             {
-                                x: row.scheduledArrivalObject.getTime(),
+                                x: row.scheduledDepartureObject.getTime() + fto,
                                 yStation: postIndex,
                                 yTrack: row.track ?? 0,
                                 stopType: 1
                             },
                             {
-                                x: row.scheduledDepartureObject.getTime(),
+                                x: row.scheduledDepartureObject.getTime() + fto,
                                 yStation: postIndex,
                                 yTrack: row.track ?? 0
                             }
@@ -283,13 +304,13 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                     } else if (row.stopType === 2) { // Optional stop
                         nodes = [
                             {
-                                x: row.scheduledArrivalObject.getTime(),
+                                x: row.scheduledDepartureObject.getTime() + fto,
                                 yStation: postIndex,
                                 yTrack: row.track ?? 0,
                                 stopType: 2
                             },
                             {
-                                x: row.scheduledDepartureObject.getTime(),
+                                x: row.scheduledDepartureObject.getTime() + fto,
                                 yStation: postIndex,
                                 yTrack: row.track ?? 0
                             }
@@ -400,11 +421,8 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
             return gy + gh * stationPos / distanceSum + trackOffset;
         }
 
-        const calculateX = (at: Date | number) => {
-            let dateNum: number;
-            if (typeof at === "number") dateNum = at;
-            else dateNum = at.getTime();
-            return gx + gw * (dateNum - data.timeSince.getTime()) / (data.timeUntil.getTime() - data.timeSince.getTime());
+        const calculateX = (at: number) => {
+            return gx + gw * (at - data.timeSince) / (data.timeUntil - data.timeSince);
         }
 
         // Draw posts
@@ -444,8 +462,8 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
         // Draw time grids
         {
             const GRID_INTERVAL = 1000 * 60 * 15;
-            let timeSince = data.timeSince.getTime(); // x = 0
-            let timeUntil = data.timeUntil.getTime(); // x = gw
+            let timeSince = data.timeSince; // x = 0
+            let timeUntil = data.timeUntil; // x = gw
 
             let initialTime = Math.ceil(timeSince / GRID_INTERVAL) * GRID_INTERVAL;
             for (let t = initialTime; t <= timeUntil; t += GRID_INTERVAL) {
@@ -473,7 +491,7 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                     let newSize = 32 * cell / ((sz.width + sz.actualBoundingBoxAscent) / Math.sqrt(2) / ghl);
                     ctx.font = `${newSize}px 'Open Sans'`;
                 }
-                ctx.fillText(formattedTime, 0, 50 * cell);
+                ctx.fillText(formattedTime, 0, 70 * cell);
                 ctx.restore();
             }
         }
