@@ -1,14 +1,13 @@
-import React, { useEffect } from "react";
-import { nowUTC } from "../../../utils/date";
-import { getTimetable } from "../../../api/api";
-import _keyBy from "lodash/keyBy";
 import { format } from "date-fns";
-import _sortBy from "lodash/sortBy";
 import { Button } from "flowbite-react";
+import _sortBy from "lodash/sortBy";
+import React, { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { TimeTableRow } from "../../../customTypes/TimeTableRow";
-import { configByType } from "../../../config/trains";
 import { useDarkMode } from "usehooks-ts";
+import { getTimetable, getTrainTimetable } from "../../../api/api";
+import { configByType } from "../../../config/trains";
+import { TimeTableRow } from "../../../customTypes/TimeTableRow";
+import { nowUTC } from "../../../utils/date";
 
 export type GraphProps = {
     post: string;
@@ -37,6 +36,7 @@ export type GraphLine = {
 
 export type GraphPost = {
     name: string;
+    distance: number;
 }
 
 export type GraphData = {
@@ -131,6 +131,9 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
         // let c = configByType[trainObj.trainType].graphColor;
 
         (async () => {
+            // Download train timetable first
+            let trainPlan = await getTrainTimetable(baseTrainNumber, serverCode);
+
             /**
              * [offset, postId, rows, rowForTrain]
              */
@@ -204,10 +207,27 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
             let lines = dataObj.lines;
             let posts = dataObj.posts;
 
+            let sumOfValidDistance = [0, 0];
+
             for (let postIndex = 0; postIndex < record.length; postIndex++) {
                 let post = record[postIndex];
+
+                let distance: number = -1;
+                if(postIndex === 0) distance = 0;
+                else {
+                    let prevStop = trainPlan.find((v) => v.pointId === "" + record[postIndex - 1][1]);
+                    let thisStop = trainPlan.find((v) => v.pointId === "" + post[1]);
+
+                    if(thisStop && prevStop) {
+                        if(prevStop.line === thisStop.line) {
+                            distance = Math.abs(thisStop.mileage - prevStop.mileage);
+                            sumOfValidDistance = [sumOfValidDistance[0] + 1, sumOfValidDistance[1] + distance];
+                        }
+                    }
+                }
+
                 // Save post name
-                posts.push({ name: offsetAndStationNames[post[0] * (stationReversed ? 1 : 1)] });
+                posts.push({ name: offsetAndStationNames[post[0] * (stationReversed ? 1 : 1)], distance: distance });
 
                 for (let rowIndex = 0; rowIndex < post[2].length; rowIndex++) {
                     const row = post[2][rowIndex];
@@ -291,6 +311,13 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                 }
             }
 
+            if(sumOfValidDistance[0] === 0) {
+                sumOfValidDistance = [1, 1];
+            }
+            posts.forEach((v) => {
+                if(v.distance === -1) v.distance = sumOfValidDistance[1] / sumOfValidDistance[0]; // If distance is not provided, we will assume the average distance.
+            })
+
             // Now, sort all nodes of each line by x
             for (let line of lines) {
                 let nodes = line.nodes;
@@ -360,11 +387,17 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
         ctx.stroke();
 
         const calculateY = (yStation: number, yTrack: number) => {
+            let distanceSum = data.posts.reduce((acc, v) => acc + v.distance, 0);
+            let stationPos = 0;
+            for(let i = 1; i <= yStation; i++) {
+                stationPos += data.posts[i].distance;
+            }
+
             let trackOffset: number;
             if (yTrack == 0) trackOffset = 0;
             else if (yTrack % 2 == 0) trackOffset = -15 * cell;
             else trackOffset = 15 * cell;
-            return gy + gh * yStation / (data.posts.length - 1) + trackOffset;
+            return gy + gh * stationPos / distanceSum + trackOffset;
         }
 
         const calculateX = (at: Date | number) => {
@@ -580,6 +613,7 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
             {t("EDR_GRAPH_warning")}
             <div className="inline-flex ml-8 items-center">
                 <span>Zoom:</span>
+                <Button size="xs" className="ml-1" onClick={() => setZoom(0.05)}>0.05x (debug)</Button>
                 <Button size="xs" className="ml-1" onClick={() => setZoom(0.5)}>0.5x</Button>
                 <Button size="xs" className="ml-1" onClick={() => setZoom(1)}>1x</Button>
                 <Button size="xs" className="ml-1" onClick={() => setZoom(2)}>2x</Button>
