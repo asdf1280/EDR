@@ -52,7 +52,14 @@ export async function dispatchController(req: express.Request, res: express.Resp
 
     try {
         const mergePosts = req.query.mergePosts === "true";
-        const postsToFetch = mergePosts ? POSTS[post] : [newInternalIdToSrId[post]];
+        const numericId = req.query.numericId === "1";
+        if(numericId && !post.match(/^\d+$/)) {
+            return res.status(400).send({
+                "error": "TYPE_MISMATCH",
+                "message": "Numeric ID requested, but post is not numeric"
+            });
+        }
+        const postsToFetch = numericId ? [parseInt(post)] : mergePosts ? POSTS[post] : [newInternalIdToSrId[post]];
         const data = await Promise.all(postsToFetch.map(post => getStationTimetable(post, trainList)));
         const mergedPosts = mergePostRows(data);
         return res

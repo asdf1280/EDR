@@ -15,8 +15,8 @@ const baseApiCall = (URL: string) => {
     return fetch(outbound).then(res => res.json());
 }
 
-export const getTimetable = (post: string, serverCode: string): Promise<TimeTableRow[]> =>
-    baseApiCall(`dispatch/${serverCode}/${post}?mergePosts=true`).then((data: TimeTableRow[]) => data.map(tr => {
+export const getTimetable = (post: string | number, serverCode: string): Promise<TimeTableRow[]> =>
+    baseApiCall(`dispatch/${serverCode}/${post}?mergePosts=true&numericId=${typeof post === "number" ? 1 : 0}`).then((data: TimeTableRow[]) => data.map(tr => {
         tr.actualArrivalObject = subHours(new Date(tr.actualArrivalObject), (new Date(tr.actualArrivalObject).getTimezoneOffset() * -1) / 60);
         tr.actualDepartureObject = subHours(new Date(tr.actualDepartureObject), (new Date(tr.actualDepartureObject).getTimezoneOffset() * -1) / 60);
         tr.scheduledArrivalObject = subHours(new Date(tr.scheduledArrivalObject), (new Date(tr.scheduledArrivalObject).getTimezoneOffset() * -1) / 60);
