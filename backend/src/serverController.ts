@@ -173,8 +173,3 @@ export function getSpeedLimitsFromSimkol() {
 export function getOsrmDataFromSelfApi(startLon: number, startLat: number, endLon: number, endLat: number) {
     return osrmClient.get(`route/v1/train/${Math.round(startLon * 100000) / 100000},${Math.round(startLat * 100000) / 100000};${Math.round(endLon * 100000) / 100000},${Math.round(endLat * 100000) / 100000}?overview=false&continue_straight=true`);
 }
-
-export function getStationCodes(_: express.Request, res: express.Response) {
-    // Send newInternalIdToSrId as a response
-    return res.send(newInternalIdToSrId);
-}

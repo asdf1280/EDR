@@ -55,6 +55,3 @@ export const getTzOffset = (serverCode: string): Promise<number> =>
 
 export const getServerTime = (serverCode: string): Promise<number> =>
     baseApiCall(`server/time/${serverCode}`);
-
-export const getStationCodes = (): Promise<Dictionary<number>> =>
-    baseApiCall("station_codes");

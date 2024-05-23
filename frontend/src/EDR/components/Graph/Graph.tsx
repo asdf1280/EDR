@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { nowUTC } from "../../../utils/date";
-import { getStationCodes, getTimetable } from "../../../api/api";
+import { getTimetable } from "../../../api/api";
 import _keyBy from "lodash/keyBy";
 import { postConfig, postToInternalIds } from "../../../config/stations";
 import {
@@ -256,18 +256,12 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
     const [refreshValue, setRefreshValue] = React.useState<boolean>(false); // Flag used for periodical refresh of the graph. This is to center current time on the graph.
     const [btnForceRefresh, setBtnForceRefresh] = React.useState<boolean>(false); // Flag for forcing refresh of the base train number
     const [baseTrainNumber, setBaseTrainNumber] = React.useState<string>("PENDING");
-    const [stationCodes, setStationCodes] = React.useState<Dictionary<number>>(); // Station codes are used for finding the next station in the timetable
     const [zoom, setZoom] = React.useState<number>(1);
     const [serverTimeObject, setServerTimeObject] = React.useState(nowUTC(serverTime));
     const currentHourSort = representIntTime(serverTimeObject);
     const [consideredTimetable, setConsideredTimetable] = React.useState<Dictionary<Dictionary<TimeTableRow>>>();
     const { t } = useTranslation();
     const graphCanvasRef = React.useRef<HTMLCanvasElement>(null);
-
-    const getStationIdentifierFromNumber = (number: number) => {
-        if (!stationCodes) return undefined;
-        return Object.entries(stationCodes).find((v) => v[1] === number)?.[0];
-    }
 
     // periodical refresh of the graph
     React.useEffect(() => {
@@ -322,11 +316,11 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
             /**
              * [offset, postId, rows, rowForTrain]
              */
-            let record: [number, string, TimeTableRow[], TimeTableRow][] = [];
+            let record: [number, number, TimeTableRow[], TimeTableRow][] = [];
 
             record.push([0, post, timetable, trainObj]);
 
-            const pushRecord = async (offset: number, postId: string): Promise<boolean> => {
+            const pushRecord = async (offset: number, postId: number): Promise<boolean> => {
                 console.log("pushRecord", offset, postId);
                 let tt = await getTimetable(postId, serverCode)
                 if (!tt) return false;
