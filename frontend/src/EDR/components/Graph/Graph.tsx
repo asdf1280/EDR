@@ -2,28 +2,13 @@ import React, { useEffect } from "react";
 import { nowUTC } from "../../../utils/date";
 import { getTimetable } from "../../../api/api";
 import _keyBy from "lodash/keyBy";
-import { postConfig, postToInternalIds } from "../../../config/stations";
-import {
-    LineChart,
-    Line,
-    XAxis,
-    YAxis,
-    CartesianGrid,
-    Tooltip,
-    Legend,
-    ResponsiveContainer,
-    ReferenceLine
-} from 'recharts';
-import { configByType } from "../../../config/trains";
 import { format } from "date-fns";
-import { getDateWithHourAndMinutes } from "../../functions/timeUtils";
-import { PathFinding_FindPathAndHaversineSum, PathFindingLineTrace } from "../../../pathfinding/api";
 import _sortBy from "lodash/sortBy";
-import { LayoutType } from "recharts/types/util/types";
 import { Button } from "flowbite-react";
 import { useTranslation } from "react-i18next";
-import { Dictionary, find } from "lodash";
 import { TimeTableRow } from "../../../customTypes/TimeTableRow";
+import { configByType } from "../../../config/trains";
+import { useDarkMode } from "usehooks-ts";
 
 export type GraphProps = {
     post: string;
@@ -35,219 +20,30 @@ export type GraphProps = {
 const dateFormatter = (date: Date) => {
     return format(date, "HH:mm");
 };
-const makeDate = (dateAry: string[], serverTime: number | undefined) => {
-    const dateNow = nowUTC(serverTime);
-    const hours = Number.parseInt(dateAry[0]);
-    const minutes = Number.parseInt(dateAry[1]);
-    const isDepartureNextDay = dateNow.getHours() >= 20 && Number.parseInt(dateAry[0]) < 12;  // TODO: less but still clunky
-    const isDeparturePreviousDay = Number.parseInt(dateAry[0]) >= 20 && dateNow.getHours() < 12; // TODO: less but still Clunky
-    const date = getDateWithHourAndMinutes(dateNow, hours, minutes, isDepartureNextDay, isDeparturePreviousDay);
-    return date.getTime();
+
+export type GraphPoint = {
+    x: number;
+    yStation: number;
+    yTrack: number;
+    stopType?: number;
 }
 
-const getStationTimetable = (postId: string, serverCode: string) => {
-    return getTimetable(postId, serverCode).then((d) => {
-        return [postId, _keyBy(d, "trainNoLocal")] as [string, Dictionary<TimeTableRow>];
-    });
+export type GraphLine = {
+    id: string;
+    name: string;
+    color: string;
+    nodes: GraphPoint[];
 }
 
-const CustomTooltip: React.FC<any> = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-        return (
-            <div className="custom-tooltip p-2 flex flex-col bg-white">
-                <span>{label}</span>
-                {_sortBy(payload, 'value').map((p) => {
-                    return (
-                        <div className="flex justify-between w-full" key={p.dataKey}>
-                            <span style={{ color: p.stroke }}>{p.dataKey}&nbsp;&nbsp;</span><span>{format(new Date(p.value), "HH:mm")}</span>
-                        </div>
-                    )
-                })}
-            </div>
-        );
-    }
-
-    return null;
+export type GraphPost = {
+    name: string;
 }
 
-const CustomizedAxisTick = (data: any, displayMode: string, color: string) => (props: any) => {
-    const { x, y } = props;
-
-    if (!props.value || props.index % 3 !== 0 || props.index === (displayMode === "vertical" ? data.length - 1 : 0)) return <></>;
-    const maybeTrainNumber = Object.entries(data[props.index]).find((v) => v[1] === props.value);
-
-    return (
-        <g transform={`translate(${x},${y})`}>
-            <text
-                x={displayMode === "vertical" ? -12 : -6}
-                y={displayMode === "vertical" ? -6 : -12}
-                dy={16 + Math.random()}
-                textAnchor="end"
-                fill={color}
-                transform={displayMode === "vertical" ? "rotate(-45)" : ""}
-                fillOpacity={1}
-                fontSize={12}
-            >
-                {(maybeTrainNumber as any)?.[0]}
-            </text>
-        </g>
-    );
-};
-
-type TrainPathNode = {
-    prev?: PathFindingLineTrace;
-    next?: PathFindingLineTrace;
-}
-
-function representIntTime(time: Date) {
-    return Number.parseInt(format(time, "HHmm"));
-}
-
-// TODO: This code is WET and have been written in an envening. Neeeeds refactoring of course ! (so it can be DRY :D)
-/**
- * timetable - sorted rows of timetable by scheduledArrivalObject 
- * post - current post ID
- * serverTime - current server time in number. I don't know its exact format.
- */
-const LegacyGraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serverCode }) => {
-    const [displayMode, setDisplayMode] = React.useState<LayoutType>("vertical");
-    const [zoom, setZoom] = React.useState<number>(1);
-    const [serverTimeObject, setServerTimeObject] = React.useState(nowUTC(serverTime));
-    const currentHourSort = representIntTime(serverTimeObject);
-    const [neighboursTimetables, setNeighboursTimetables] = React.useState<Dictionary<Dictionary<TimeTableRow>>>();
-    const [allPathsOfPosts, setAllPathsOfPosts] = React.useState<{ [postId: string]: TrainPathNode }>();
-    const [data, setData] = React.useState<any[]>();
-    const { t } = useTranslation();
-    const timetableRowsWithinRange: { [trainNo: string]: TimeTableRow } = React.useMemo(
-        () => _keyBy(timetable.filter((ttRow: TimeTableRow) =>
-            Math.abs(representIntTime(ttRow.scheduledArrivalObject) - currentHourSort) <= 130 / zoom), "trainNoLocal"),
-        [currentHourSort, timetable, zoom]);
-
-    React.useEffect(() => { // This code is probably for refreshing the whole graph every 10 seconds. There might be a more straightforward way to do this. (At first glance, this seems like changing the Date object to same value again and again.)
-        setServerTimeObject(nowUTC(serverTime));
-    }, [serverTime])
-
-    React.useEffect(() => {
-        const gottenPostConfig = postConfig[post];
-        if (!post || !gottenPostConfig.graphConfig?.pre || !gottenPostConfig.graphConfig?.post || !serverCode) return;
-        const onScreenPosts = [...gottenPostConfig.graphConfig.pre, ...gottenPostConfig.graphConfig.post];
-        const postsToCalculatePath = [...gottenPostConfig.graphConfig.pre, post, ...gottenPostConfig.graphConfig.post, ...gottenPostConfig.graphConfig.final];
-        // Get all pathfinding possible paths between two stations (with intermediate stations not dispatched by players)
-        const allPaths = postsToCalculatePath.reduce((acc, iteratingPost, index) => {
-            const prevPost = index > 0 ? postsToCalculatePath[index - 1] : undefined;
-            const nextPost = index < postsToCalculatePath.length - 1 ? postsToCalculatePath[index + 1] : undefined;
-            const maybeLineTraceAndDistancePrevious = prevPost
-                ? PathFinding_FindPathAndHaversineSum(prevPost, iteratingPost)
-                : undefined;
-            const maybeLineTraceAndDistanceNext = nextPost
-                ? PathFinding_FindPathAndHaversineSum(iteratingPost, nextPost)
-                : undefined;
-
-            return {
-                ...acc,
-                [iteratingPost]: {
-                    prev: maybeLineTraceAndDistancePrevious?.[0],
-                    next: maybeLineTraceAndDistanceNext?.[0]
-                }
-            }
-        }, {});
-
-        setAllPathsOfPosts(allPaths);
-
-        // Get timetable data
-        Promise.all(onScreenPosts.map(postId => getStationTimetable(postId, serverCode)))
-            .then(data => {
-                return Object.fromEntries(data) ?? undefined; // This shouldn't be null or undefined in normal circumstances
-            })
-            .then(setNeighboursTimetables)
-    }, [post, serverCode]);
-
-    React.useEffect(() => {
-        if (!neighboursTimetables || !timetableRowsWithinRange || !allPathsOfPosts) return;
-        const gottenPostConfig = postConfig[post];
-        if (!gottenPostConfig.graphConfig?.pre || !gottenPostConfig.graphConfig?.post) return;
-
-        const postsToScan = [...gottenPostConfig.graphConfig!.pre, post, ...gottenPostConfig.graphConfig!.post];
-        const data = postsToScan.flatMap((postId: string) => {
-            const allTrainDepartures = Object.fromEntries(Object.values(timetableRowsWithinRange).map((t): [] | [string, number] => {
-                const targetTrain = postId === post ? t : neighboursTimetables[postId]?.[t.trainNoLocal];
-                if (!targetTrain) return [];
-                const nextPost = targetTrain.toPost ? postToInternalIds[encodeURIComponent(targetTrain.toPost)]?.id : false;
-                if (!nextPost) return [];
-                const isTrainGoingToKatowice = !!allPathsOfPosts[postId]?.next?.find((station) => station && station?.id === nextPost)
-                const targetValue = isTrainGoingToKatowice ? dateFormatter(targetTrain?.scheduledDepartureObject) : dateFormatter(targetTrain?.scheduledArrivalObject);
-                return [targetTrain.trainNoLocal, makeDate(targetValue.split(":"), serverTime)]
-            }))
-            const allTrainArrivals = Object.fromEntries(Object.values(timetableRowsWithinRange).map((t) => {
-                const targetTrain = postId === post ? t : neighboursTimetables[postId]?.[t.trainNoLocal];
-                if (!targetTrain) return [];
-                const nextPost = targetTrain.toPost ? postToInternalIds[encodeURIComponent(targetTrain.toPost)]?.id : false;
-                if (!targetTrain || !nextPost) return [];
-                const isTrainGoingToKatowice = !!allPathsOfPosts[postId]?.next?.find((station) => station && station?.id === nextPost)
-                const targetValue = isTrainGoingToKatowice ? dateFormatter(targetTrain?.scheduledArrivalObject) : dateFormatter(targetTrain?.scheduledDepartureObject);
-                return [targetTrain.trainNoLocal, makeDate(targetValue.split(":"), serverTime)]
-            }))
-            return [{
-                name: postId,
-                ...allTrainArrivals
-            }, {
-                name: postId,
-                ...allTrainDepartures
-            }]
-        });
-
-        setData(data);
-    }, [neighboursTimetables, timetableRowsWithinRange, currentHourSort, post, allPathsOfPosts, serverTime])
-
-    const TimeComponent = displayMode === "vertical" ? XAxis : YAxis;
-    const PostComponent = displayMode === "vertical" ? YAxis : XAxis;
-
-    return (
-        <>
-            <div className="text-center inline-flex items-center justify-center w-full">
-                {t("EDR_GRAPH_warning")}
-                <Button className="ml-4" size={'xs'} onClick={() => setDisplayMode(displayMode === "vertical" ? "horizontal" : "vertical")}>
-                    {t("EDR_GRAPH_switch_axis")}
-                </Button>
-                <div className="inline-flex ml-8 items-center">
-                    <span>Zoom:</span>
-                    <Button size="xs" className="ml-1" onClick={() => setZoom(1)}>1x</Button>
-                    <Button size="xs" className="ml-1" onClick={() => setZoom(2)}>2x</Button>
-                    <Button size="xs" className="ml-1" onClick={() => setZoom(3)}>3x</Button>
-                </div>
-            </div>
-            <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                    layout={displayMode}
-                    width={500}
-                    height={300}
-                    data={data}
-                    margin={{
-                        top: 20,
-                        right: 30,
-                        left: 20,
-                        bottom: 5,
-                    }}
-                >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <TimeComponent data-key="time" type="number" scale="time" domain={["dataMin", "dataMax"]} tickCount={20} interval={0} tickFormatter={dateFormatter} reversed={displayMode === "horizontal"} />
-                    <ReferenceLine {...displayMode === "vertical" ? { x: serverTimeObject.getTime() } : { y: serverTimeObject.getTime() }} stroke="black" strokeWidth={2} strokeOpacity={0.5} type={"dotted"} />
-                    <PostComponent dataKey="name" type="category" allowDuplicatedCategory={false} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend />
-                    {Object.values(timetableRowsWithinRange).map((t) => {
-                        const color = configByType[t.trainType]?.graphColor ?? "purple"
-                        return <Line key={t.trainNoLocal} dataKey={t.trainNoLocal}
-                            label={CustomizedAxisTick(data, displayMode, color)}
-                            fillOpacity={0.8}
-                            stroke={color}>
-                        </Line>
-                    }
-                    )}
-                </LineChart>
-            </ResponsiveContainer>
-        </>
-    );
+export type GraphData = {
+    timeSince: Date;
+    timeUntil: Date;
+    posts: GraphPost[];
+    lines: GraphLine[];
 }
 
 // A new graph code based on train timetable. This code is WET because I wrote this while drinking a beer. It is a delicious spaghetti.
@@ -258,10 +54,11 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
     const [baseTrainNumber, setBaseTrainNumber] = React.useState<string>("PENDING");
     const [zoom, setZoom] = React.useState<number>(1);
     const [serverTimeObject, setServerTimeObject] = React.useState(nowUTC(serverTime));
-    const currentHourSort = representIntTime(serverTimeObject);
-    const [consideredTimetable, setConsideredTimetable] = React.useState<Dictionary<Dictionary<TimeTableRow>>>();
     const { t } = useTranslation();
+    const { isDarkMode } = useDarkMode();
     const graphCanvasRef = React.useRef<HTMLCanvasElement>(null);
+    const timetableCache = React.useRef<Record<number, TimeTableRow[]>>({});
+    const graphDataRef = React.useRef<GraphData | null>(null);
 
     // periodical refresh of the graph
     React.useEffect(() => {
@@ -276,18 +73,10 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
         setServerTimeObject(nowUTC(serverTime));
     }, [serverTime])
 
-    // Downloading station codes
-    React.useEffect(() => {
-        getStationCodes().then((v) => {
-            setStationCodes(v);
-            setRefreshValue(!refreshValue);
-        });
-    }, [])
-
     React.useEffect(() => {
         // Set the base train number to the most appropriate train number
         // In this case, the system will choose the next train to depart from the station
-        if (!timetable || !serverTimeObject || !stationCodes) return;
+        if (!timetable || !serverTimeObject) return;
 
         const sortedTimetable = timetable.sort((a, b) => {
             return a.scheduledDepartureObject.getTime() - b.scheduledDepartureObject.getTime();
@@ -298,11 +87,11 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                 return;
             }
         }
-    }, [post, serverCode, btnForceRefresh, stationCodes])
+    }, [post, serverCode, btnForceRefresh])
 
     React.useEffect(() => {
         // Reload the timetable when the base train number changes
-        if (baseTrainNumber === "PENDING" || !serverCode || !stationCodes) return;
+        if (baseTrainNumber === "PENDING" || !serverCode) return;
         // baseTrainNumber not is in the timetable. Find a new base train number.
         if (!timetable.some((v) => v.trainNoLocal === baseTrainNumber)) {
             setBtnForceRefresh(!btnForceRefresh);
@@ -312,23 +101,40 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
         let trainObj = timetable.find((v) => v.trainNoLocal === baseTrainNumber);
         if (!trainObj) return;
 
+        // let c = configByType[trainObj.trainType].graphColor;
+
         (async () => {
             /**
              * [offset, postId, rows, rowForTrain]
              */
             let record: [number, number, TimeTableRow[], TimeTableRow][] = [];
+            /**
+             * The station name isn't provided for the current post, so we have to supply it from other posts.
+             */
+            let offsetAndStationNames: Record<number, string> = {};
 
-            record.push([0, post, timetable, trainObj]);
+            record.push([0, parseInt(trainObj.pointId), timetable, trainObj]);
+            offsetAndStationNames[0] = post; // Unable to get the full name of the current post, so we have to use the post code for now.
+            offsetAndStationNames[1] = trainObj.toPost ?? "UNKNOWN";
+            offsetAndStationNames[-1] = trainObj.fromPost ?? "UNKNOWN";
 
             const pushRecord = async (offset: number, postId: number): Promise<boolean> => {
                 console.log("pushRecord", offset, postId);
-                let tt = await getTimetable(postId, serverCode)
+                let tt: TimeTableRow[];
+                if (timetableCache.current[postId])
+                    tt = timetableCache.current[postId];
+                else {
+                    tt = await getTimetable(postId, serverCode)
+                    timetableCache.current[postId] = tt;
+                }
                 if (!tt) return false;
                 let train = tt.find((v) => v.trainNoLocal === baseTrainNumber);
                 if (!train) return false;
                 let insertAt = 0;
                 if (offset > 0) insertAt = record.length;
                 record.splice(insertAt, 0, [offset, postId, tt, train]);
+                offsetAndStationNames[offset - 1] = train.fromPost ?? "UNKNOWN";
+                offsetAndStationNames[offset + 1] = train.toPost ?? "UNKNOWN";
                 return true;
             }
 
@@ -344,12 +150,7 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                 if (stopBrowsingBackward && stopBrowsingForward) break;
 
                 if (last[3].toPostId && !stopBrowsingForward) {
-                    let sid = getStationIdentifierFromNumber(parseInt(last[3].toPostId)); // parseInt never fails
-                    if (!sid) {
-                        stopBrowsingForward = true;
-                        continue;
-                    }
-                    if (!await pushRecord(last[0] + 1, sid)) {
+                    if (!await pushRecord(last[0] + 1, parseInt(last[3].toPostId))) {
                         stopBrowsingForward = true;
                     }
                 }
@@ -357,12 +158,7 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                 if (record.length >= 7) break; // Prevent count from reaching 8 in an edge case (not sure if it's possible)
 
                 if (first[3].fromPostId && !stopBrowsingBackward) {
-                    let sid = getStationIdentifierFromNumber(parseInt(first[3].fromPostId)); // parseInt never fails
-                    if (!sid) {
-                        stopBrowsingBackward = true;
-                        continue;
-                    }
-                    if (!await pushRecord(first[0] - 1, sid)) {
+                    if (!await pushRecord(first[0] - 1, parseInt(first[3].fromPostId))) {
                         stopBrowsingBackward = true;
                     }
                 }
@@ -370,6 +166,106 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
 
             // Let's print the record for debugging purposes
             console.log(record);
+            console.log(offsetAndStationNames);
+
+            // Time to really calculate train routes
+            let timeRange = 35 * 60 * 1000 / zoom; // 35 minutes
+            let dataObj: GraphData = {
+                timeSince: new Date(serverTimeObject.getTime() - timeRange),
+                timeUntil: new Date(serverTimeObject.getTime() + timeRange * 3),
+                posts: [],
+                lines: []
+            };
+            let lines = dataObj.lines;
+            let posts = dataObj.posts;
+
+            for (let post of record) {
+                // Save post name
+                posts.push({ name: offsetAndStationNames[post[0]] });
+
+                for (let i = 0; i < post[2].length; i++) {
+                    const row = post[2][i];
+
+                    if (row.scheduledDepartureObject.getTime() < dataObj.timeSince.getTime() - 60000
+                        && row.scheduledArrivalObject.getTime() > dataObj.timeUntil.getTime() + 60000) {
+                        // Irrelevant train
+                        continue;
+                    }
+
+                    // The code below determines how to save the train's movement to the graph data.
+                    let trainInLines = lines.filter((v) => v.id.startsWith(row.trainNoLocal + "_"))
+                    let createNewLineName: string | null = null;
+                    let appendToLineName: string | null = null;
+                    if (trainInLines) {
+                        // Check if there's a discontinuity
+                        let lastLineOfTrain = trainInLines[trainInLines.length - 1];
+                        let lastNode = lastLineOfTrain.nodes[lastLineOfTrain.nodes.length - 1];
+                        if (lastNode.yStation == i - 1) { // Continuous route. Append to the last line.
+                            appendToLineName = lastLineOfTrain.id;
+                        } else { // Discontinuous route. Create a new line for the same train.
+                            let lastLineNo = parseInt(lastLineOfTrain.id.split("_")[1]);
+                            createNewLineName = row.trainNoLocal + "_" + (lastLineNo + 1);
+                        }
+                    } else {
+                        createNewLineName = row.trainNoLocal + "_0";
+                    }
+
+                    // Prepare nodes to append
+                    let nodes: GraphPoint[] = [];
+                    if (row.stopType === 0) { // Pass
+                        nodes = [
+                            {
+                                x: row.scheduledDepartureObject.getTime(),
+                                yStation: i,
+                                yTrack: 0
+                            }
+                        ]
+                    } else if (row.stopType === 1) { // Required stop
+                        nodes = [
+                            {
+                                x: row.scheduledArrivalObject.getTime(),
+                                yStation: i,
+                                yTrack: row.track ?? 0,
+                                stopType: 1
+                            },
+                            {
+                                x: row.scheduledDepartureObject.getTime(),
+                                yStation: i,
+                                yTrack: row.track ?? 0
+                            }
+                        ]
+                    } else if (row.stopType === 2) { // Optional stop
+                        nodes = [
+                            {
+                                x: row.scheduledArrivalObject.getTime(),
+                                yStation: i,
+                                yTrack: row.track ?? 0,
+                                stopType: 2
+                            },
+                            {
+                                x: row.scheduledDepartureObject.getTime(),
+                                yStation: i,
+                                yTrack: row.track ?? 0
+                            }
+                        ]
+                    }
+
+                    // The actual code to save to train data.
+                    if (createNewLineName) {
+                        lines.push({
+                            color: configByType[row.trainType].graphColor,
+                            id: createNewLineName,
+                            name: row.trainNoLocal,
+                            nodes
+                        })
+                    } else {
+                        let line = lines.find((v) => v.id === appendToLineName)!;
+                        line.nodes.push(...nodes)
+                    }
+                }
+            }
+
+            graphDataRef.current = dataObj;
         })();
     }, [baseTrainNumber, post, serverCode, btnForceRefresh])
 
@@ -386,14 +282,178 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
         return () => window.removeEventListener("resize", listener);
     }, []);
 
-    // Rendering the graph
+    // Rendering the graph. Possibly this should be separated.
     useEffect(() => {
-        if(!graphCanvasRef.current) return;
+        if (!graphCanvasRef.current) return;
+        if (!graphDataRef.current) return;
         const canvas = graphCanvasRef.current;
+        const data = graphDataRef.current;
         const ctx = canvas.getContext("2d");
-        if(!ctx) return;
+        const cell = window.devicePixelRatio || 1;
+        if (!ctx) return;
+
+        const ForeColor = isDarkMode ? "white" : "black";
+        const GridColor = isDarkMode ? "#5c5c5c" : "#cccccc";
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        let gx = Math.min(canvas.width * 0.15, cell * 200);
+        let gy = 0;
+        let gw = canvas.width - gx;
+        let gh = canvas.height - Math.min(canvas.height * 0.15, cell * 200);
+        let gwl = gx;
+        let ghl = canvas.height - gh;
+
+        // Draw graph frame
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 1 * cell;
+        ctx.beginPath();
+        ctx.moveTo(gx, gy);
+        ctx.lineTo(gx, gy + gh);
+        ctx.lineTo(gx + gw, gy + gh);
+        ctx.stroke();
+
+        const calculateY = (yStation: number, yTrack: number) => {
+            let trackOffset: number;
+            if (yTrack == 0) trackOffset = 0;
+            else if (yTrack % 2 == 0) trackOffset = (yTrack - 1) * -8 * cell;
+            else trackOffset = yTrack * 8 * cell;
+            return gy + gh * (yStation + 1) / (data.posts.length + 1) + trackOffset;
+        }
+
+        const calculateX = (at: Date | number) => {
+            let dateNum: number;
+            if (typeof at === "number") dateNum = at;
+            else dateNum = at.getTime();
+            return gx + gw * (dateNum - data.timeSince.getTime()) / (data.timeUntil.getTime() - data.timeSince.getTime());
+        }
+
+        // Draw posts
+        let postCount = data.posts.length;
+        {
+            for (let i = 0; i < postCount; i++) {
+                const post = data.posts[i];
+                const y = calculateY(i, 0);
+
+                // Draw grid line
+                ctx.strokeStyle = GridColor;
+                ctx.lineWidth = 1 * cell;
+                ctx.setLineDash([2 * cell, 2 * cell]);
+                ctx.beginPath();
+                ctx.moveTo(gx, y);
+                ctx.lineTo(gx + gw, y);
+                ctx.stroke();
+
+                // Draw post label, 45 degree rotated
+                ctx.save()
+                ctx.translate(gwl, y);
+                ctx.rotate(-Math.PI / 4);
+                ctx.font = `${12 * cell}px`;
+                ctx.textAlign = "right";
+                ctx.fillStyle = ForeColor;
+                // make sure text doesn't go out of the canvas
+                let sz = ctx.measureText(post.name);
+                if ((sz.width + sz.actualBoundingBoxAscent) / Math.sqrt(2) > ghl) {
+                    let newSize = 12 * cell / ((sz.width + sz.actualBoundingBoxAscent) / Math.sqrt(2) / ghl);
+                    ctx.font = `${newSize}px`;
+                }
+                ctx.fillText(post.name, 0, 6 * cell);
+                ctx.restore();
+            }
+        }
+
+        // Draw time grids
+        {
+            const GRID_INTERVAL = 1000 * 60 * 15;
+            let timeSince = data.timeSince.getTime(); // x = 0
+            let timeUntil = data.timeUntil.getTime(); // x = gw
+
+            let initialTime = Math.ceil(timeSince / GRID_INTERVAL) * GRID_INTERVAL;
+            for (let t = initialTime; t <= timeUntil; t += GRID_INTERVAL) {
+                const x = calculateX(t);
+                const formattedTime = dateFormatter(new Date(t));
+
+                // Draw grid line
+                ctx.strokeStyle = GridColor;
+                ctx.lineWidth = 1 * cell;
+                ctx.setLineDash([2 * cell, 2 * cell]);
+                ctx.beginPath();
+                ctx.moveTo(x, gy);
+                ctx.lineTo(x, gy + gh);
+                ctx.stroke();
+
+                // Draw time label, 45 degree rotated
+                ctx.save();
+                ctx.translate(x, gy + gh);
+                ctx.rotate(-Math.PI / 4);
+                ctx.font = `${12 * cell}px`;
+                ctx.textAlign = "right";
+                ctx.fillStyle = ForeColor;
+                // make sure text doesn't go out of the canvas
+                let sz = ctx.measureText(formattedTime);
+                if ((sz.width + sz.actualBoundingBoxAscent) / Math.sqrt(2) > ghl) {
+                    let newSize = 12 * cell / ((sz.width + sz.actualBoundingBoxAscent) / Math.sqrt(2) / ghl);
+                    ctx.font = `${newSize}px`;
+                }
+                ctx.fillText(formattedTime, 0, 6 * cell);
+                ctx.restore();
+            }
+        }
+
+        // Draw train lines, finally!
+        {
+            for (let line of data.lines) {
+                ctx.strokeStyle = line.color;
+                ctx.lineCap = "round";
+
+                let lastNode = line.nodes[0];
+                let lastX = calculateX(lastNode.x);
+                let lastY = calculateY(lastNode.yStation, lastNode.yTrack);
+
+                for (let node of line.nodes) {
+                    let x = calculateX(node.x);
+                    let y = calculateY(node.yStation, node.yTrack);
+
+                    if(lastNode.stopType === 2) {
+                        ctx.lineWidth = 6 * cell;
+                    } else {
+                        ctx.lineWidth = 3 * cell;
+                    }
+                    if (lastNode.stopType !== 1) {
+                        ctx.beginPath();
+                        ctx.moveTo(lastX, lastY);
+                        ctx.lineTo(x, y);
+                        ctx.stroke();
+                    } else {
+                        ctx.beginPath();
+                        ctx.moveTo(lastX, lastY - 3 * cell);
+                        ctx.lineTo(x, y - 3 * cell);
+                        ctx.stroke();
+
+                        ctx.beginPath();
+                        ctx.moveTo(lastX, lastY + 3 * cell);
+                        ctx.lineTo(x, y + 3 * cell);
+                        ctx.stroke();
+                    }
+
+                    lastNode = node;
+                    lastX = x;
+                    lastY = y;
+                }
+            }
+        }
+
+        // Draw current time
+        {
+            ctx.strokeStyle = isDarkMode ? "#ff5c5c" : "#ad0000"
+            ctx.lineWidth = 5 * cell;
+            let x = calculateX(serverTimeObject);
+
+            ctx.beginPath();
+            ctx.moveTo(x, gy - 10 * cell);
+            ctx.lineTo(x, gy + gh + 10 * cell);
+            ctx.stroke();
+        }
     })
 
     return <>
