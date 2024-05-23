@@ -329,7 +329,7 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
         let ghl = canvas.height - gh;
 
         // Draw graph frame
-        ctx.strokeStyle = "black";
+        ctx.strokeStyle = ForeColor;
         ctx.lineWidth = 1 * cell;
         ctx.beginPath();
         ctx.moveTo(gx, gy);
@@ -438,8 +438,11 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                 ctx.save();
                 ctx.translate(lastX, lastY);
                 ctx.rotate(-Math.PI / 4);
-                ctx.font = `${12 * cell}px`;
                 ctx.textAlign = "left";
+                if (line.name !== baseTrainNumber)
+                    ctx.font = `${12 * cell}px`;
+                else
+                    ctx.font = `${12 * cell}px bold`;
                 ctx.fillStyle = ForeColor;
                 ctx.fillText(line.name, 3 * cell, 6 * cell);
 
