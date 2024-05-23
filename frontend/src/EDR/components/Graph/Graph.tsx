@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { nowUTC } from "../../../utils/date";
 import { getStationCodes, getTimetable } from "../../../api/api";
 import _keyBy from "lodash/keyBy";
@@ -24,7 +24,6 @@ import { Button } from "flowbite-react";
 import { useTranslation } from "react-i18next";
 import { Dictionary, find } from "lodash";
 import { TimeTableRow } from "../../../customTypes/TimeTableRow";
-import { StationId } from "../../../enums/stationId";
 
 export type GraphProps = {
     post: string;
@@ -263,9 +262,10 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
     const currentHourSort = representIntTime(serverTimeObject);
     const [consideredTimetable, setConsideredTimetable] = React.useState<Dictionary<Dictionary<TimeTableRow>>>();
     const { t } = useTranslation();
+    const graphCanvasRef = React.useRef<HTMLCanvasElement>(null);
 
     const getStationIdentifierFromNumber = (number: number) => {
-        if(!stationCodes) return undefined;
+        if (!stationCodes) return undefined;
         return Object.entries(stationCodes).find((v) => v[1] === number)?.[0];
     }
 
@@ -275,7 +275,7 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
             setRefreshValue(!refreshValue);
         }, 10000);
         return () => clearInterval(intId);
-    })
+    }, [])
 
     // Conversion of server time to Date object
     React.useEffect(() => {
@@ -333,12 +333,15 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
                 let train = tt.find((v) => v.trainNoLocal === baseTrainNumber);
                 if (!train) return false;
                 let insertAt = 0;
-                if(offset > 0) insertAt = record.length;
+                if (offset > 0) insertAt = record.length;
                 record.splice(insertAt, 0, [offset, postId, tt, train]);
                 return true;
             }
 
-            // Try our best to show at least seven posts around the current post
+            // Try our best to show at least seven posts around the current post, if the selected train has enough stations.
+            // This might even only have one post.
+
+            // This code depends on post codes. This caused stations outside player-dispatched area to be ignored. I need to change backend code to support Simrail internal ID for retrieving timetable.
             let stopBrowsingBackward = false;
             let stopBrowsingForward = false;
             while (record.length < 7) {
@@ -348,7 +351,7 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
 
                 if (last[3].toPostId && !stopBrowsingForward) {
                     let sid = getStationIdentifierFromNumber(parseInt(last[3].toPostId)); // parseInt never fails
-                    if(!sid) {
+                    if (!sid) {
                         stopBrowsingForward = true;
                         continue;
                     }
@@ -361,7 +364,7 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
 
                 if (first[3].fromPostId && !stopBrowsingBackward) {
                     let sid = getStationIdentifierFromNumber(parseInt(first[3].fromPostId)); // parseInt never fails
-                    if(!sid) {
+                    if (!sid) {
                         stopBrowsingBackward = true;
                         continue;
                     }
@@ -376,7 +379,41 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
         })();
     }, [baseTrainNumber, post, serverCode, btnForceRefresh])
 
-    return <></>
+    useEffect(() => {
+        let listener = () => {
+            if (graphCanvasRef.current) {
+                let bcr = graphCanvasRef.current.getBoundingClientRect();
+                graphCanvasRef.current.width = bcr.width * (window.devicePixelRatio || 1);
+                graphCanvasRef.current.height = bcr.height * (window.devicePixelRatio || 1);
+            }
+        }
+        listener();
+        window.addEventListener("resize", listener);
+        return () => window.removeEventListener("resize", listener);
+    }, []);
+
+    // Rendering the graph
+    useEffect(() => {
+        if(!graphCanvasRef.current) return;
+        const canvas = graphCanvasRef.current;
+        const ctx = canvas.getContext("2d");
+        if(!ctx) return;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    })
+
+    return <>
+        <div className="text-center inline-flex items-center justify-center w-full">
+            {t("EDR_GRAPH_warning")}
+            <div className="inline-flex ml-8 items-center">
+                <span>Zoom:</span>
+                <Button size="xs" className="ml-1" onClick={() => setZoom(1)}>1x</Button>
+                <Button size="xs" className="ml-1" onClick={() => setZoom(2)}>2x</Button>
+                <Button size="xs" className="ml-1" onClick={() => setZoom(3)}>3x</Button>
+            </div>
+        </div>
+        <canvas className="w-full h-full" ref={graphCanvasRef}></canvas>
+    </>
 }
 
 export default React.memo(GraphContent)
