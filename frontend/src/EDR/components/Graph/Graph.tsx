@@ -493,16 +493,16 @@ const GraphContent: React.FC<GraphProps> = ({ timetable, post, serverTime, serve
 
         const onCanvasClick = (e: MouseEvent) => {
             let bcr = canvas.getBoundingClientRect();
-            let cxP = (e.clientX - bcr.left) / bcr.width;
-            let cyP = (e.clientY - bcr.top) / bcr.height;
+            let cxP = (e.clientX - bcr.left) / bcr.width * canvas.width;
+            let cyP = (e.clientY - bcr.top) / bcr.height * canvas.height;
 
             let m: [number, GraphLine][] = data.lines.map((v) => {
                 let dist = Infinity;
                 for (let i = 1; i < v.nodes.length; i++) {
-                    let nDist = calculatePointToLineDistance(calculateX(v.nodes[i - 1].x) / canvas.width,
-                        calculateY(v.nodes[i - 1].yStation, v.nodes[i - 1].yTrack) / canvas.height,
-                        calculateX(v.nodes[i].x) / canvas.width,
-                        calculateY(v.nodes[i].yStation, v.nodes[i].yTrack) / canvas.height, cxP, cyP);
+                    let nDist = calculatePointToLineDistance(calculateX(v.nodes[i - 1].x),
+                        calculateY(v.nodes[i - 1].yStation, v.nodes[i - 1].yTrack),
+                        calculateX(v.nodes[i].x),
+                        calculateY(v.nodes[i].yStation, v.nodes[i].yTrack), cxP, cyP);
                     dist = Math.min(dist, nDist);
                 }
                 return [dist, v];
