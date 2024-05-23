@@ -11,7 +11,7 @@ const Graph: React.FC<Props> = (props) => {
     const {isOpen, onClose} = props;
     const graphBody = <GraphContent serverTime={serverTime} timetable={timetable} post={post} serverCode={serverCode}/>
 
-    return props.fullScreenMode ? <div className="h-screen w-screen">{graphBody}</div> : <GraphModal isOpen={isOpen} onClose={onClose}>{graphBody}</GraphModal>
+    return props.fullScreenMode ? <div className="h-screen w-100 flex flex-col">{graphBody}</div> : <GraphModal isOpen={isOpen} onClose={onClose}>{graphBody}</GraphModal>
 }
 
 export default Graph;
