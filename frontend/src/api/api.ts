@@ -4,7 +4,6 @@ import { ISteamUser } from "../config/ISteamUser";
 import { TrainTimeTableRow } from "../Sirius";
 import { TimeTableRow } from "../customTypes/TimeTableRow";
 import { ExtendedTrain } from "../customTypes/ExtendedTrain";
-import { Dictionary } from "lodash";
 
 export const BASE_API_URL = "http://127.0.0.1/";
 
